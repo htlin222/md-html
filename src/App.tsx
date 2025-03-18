@@ -1,397 +1,279 @@
-import React, { useState, useRef, useEffect, ChangeEvent } from 'react';
-import { Play, Pause, Upload, MoreVertical } from 'lucide-react';
-import { useToast } from '@/components/ui/use-toast';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { useState, useEffect } from "react";
 
-const sampleMarkdown = `# Cast
-* John Smith as Hero
-* Jane Doe as Heroine
-* Bob Wilson as Villain
+const MarkdownToHtmlEditor = () => {
+	const [markdown, setMarkdown] = useState(
+		'# Hello World\n\nThis is **bold** and this is *italic*.\n\nWelcome {username}! Your account balance is {balance}.\n\n- List item 1\n- List item 2\n\n[Link to Google](https://www.google.com)\n\n```javascript\nconsole.log("Hello World");\n```',
+	);
+	const [html, setHtml] = useState("");
+	const [htmlForTextarea, setHtmlForTextarea] = useState("");
+	const [copied, setCopied] = useState(false);
+	const [placeholders, setPlaceholders] = useState<string[]>([]);
+	const [copiedPlaceholder, setCopiedPlaceholder] = useState<string | null>(null);
 
-# Crew
-* Director: James Cameron
-* Producer: Steven Spielberg
-* Writer: Christopher Nolan
+	// Helper function to escape HTML special characters
+	const escapeHtml = (text: string): string => {
+		return text
+			.replace(/&/g, "&amp;")
+			.replace(/</g, "&lt;")
+			.replace(/>/g, "&gt;")
+			.replace(/"/g, "&quot;")
+			.replace(/'/g, "&#039;");
+	};
 
-# Special Thanks
-* Coffee Machine
-* Pizza Delivery
-* Stack Overflow`;
+	// Helper function to extract placeholders from text
+	const extractPlaceholders = (text: string): string[] => {
+		const matches = text.match(/\{([^{}]+)\}/g) || [];
+		return matches.map(match => match.slice(1, -1));
+	};
 
-const CreditsRoll = () => {
-  const [markdown, setMarkdown] = useState(sampleMarkdown);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [speed, setSpeed] = useState(1);
-  const [startOffset, setStartOffset] = useState(133); // Default 100% (just below window)
-  const [showSettings, setShowSettings] = useState(false);
-  const [fontSize, setFontSize] = useState(16); // Base font size in px
-  
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const handleFontSizeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setFontSize(parseInt(e.target.value));
-  };
-  const containerRef = useRef<HTMLDivElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
-  const [contentHeight, setContentHeight] = useState(0);
-  const [windowHeight, setWindowHeight] = useState(0);
+	// Helper function to copy placeholder
+	const copyPlaceholder = (placeholder: string) => {
+		navigator.clipboard.writeText(`content.${placeholder}`).then(
+			() => {
+				setCopiedPlaceholder(placeholder);
+				setTimeout(() => setCopiedPlaceholder(null), 2000);
+			},
+			(err) => {
+				console.error("Could not copy placeholder: ", err);
+			},
+		);
+	};
 
-  useEffect(() => {
-    if (contentRef.current && contentRef.current.offsetHeight) {
-      setContentHeight(contentRef.current.offsetHeight);
-    }
-    setWindowHeight(window.innerHeight);
+	// Custom markdown parser
+	const parseMarkdown = (text: string): string => {
+		if (!text) return "";
 
-    const handleResize = () => {
-      setWindowHeight(window.innerHeight);
-    };
+		let result = text;
 
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, [markdown]);
+		// Handle PHP placeholders with {name} syntax
+		result = result.replace(
+			/\{([^{}]+)\}/g,
+			'<span class="bg-yellow-100 text-red-600 px-1 rounded">&lt;?= $1 ?&gt;</span>',
+		);
 
-  const { toast } = useToast();
-  
-  const handleFileUpload = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    
-    if (!file.name.endsWith('.md')) {
-      toast({
-        title: 'Invalid File',
-        description: 'Please upload a .md file',
-        variant: 'destructive',
-      });
-      return;
-    }
+		// Handle code blocks with ```
+		result = result.replace(
+			/```(\w*)\n([\s\S]*?)\n```/g,
+			function (_match: string, language: string, code: string) {
+				return `<pre><code class="language-${language}">${escapeHtml(code)}</code></pre>`;
+			},
+		);
 
-    const reader = new FileReader();
-    reader.onload = (e: ProgressEvent<FileReader>) => {
-      if (typeof e.target?.result === 'string') {
-        setMarkdown(e.target.result);
-        toast({
-          title: 'File Uploaded',
-          description: `Successfully loaded ${file.name}`,
-        });
-      } else {
-        toast({
-          title: 'Upload Failed',
-          description: 'Could not read file content',
-          variant: 'destructive',
-        });
-      }
-    };
-    reader.onerror = () => {
-      toast({
-        title: 'Upload Failed',
-        description: 'Could not read file',
-        variant: 'destructive',
-      });
-    };
-    reader.readAsText(file);
-  };
+		// Handle inline code with `
+		result = result.replace(/`([^`]+)`/g, "<code>$1</code>");
 
-  const animationFrameRef = useRef<number>();
-  const startTimeRef = useRef<number>(0);
-  const [currentPosition, setCurrentPosition] = useState(0);
+		// Handle headers
+		result = result.replace(/^# (.*$)/gm, "<h1>$1</h1>");
+		result = result.replace(/^## (.*$)/gm, "<h2>$1</h2>");
+		result = result.replace(/^### (.*$)/gm, "<h3>$1</h3>");
+		result = result.replace(/^#### (.*$)/gm, "<h4>$1</h4>");
+		result = result.replace(/^##### (.*$)/gm, "<h5>$1</h5>");
+		result = result.replace(/^###### (.*$)/gm, "<h6>$1</h6>");
 
-  const animate = (timestamp: number) => {
-    if (!startTimeRef.current) {
-      startTimeRef.current = timestamp;
-    }
-    
-    const elapsed = timestamp - startTimeRef.current;
-    const progress = (elapsed / 1000) * speed * 100; // pixels per second
-    
-    if (containerRef.current) {
-      const newPosition = currentPosition - progress;
-      containerRef.current.style.transform = `translateY(${newPosition}px)`;
-      setCurrentPosition(newPosition);
-      
-      if (isPlaying) {
-        animationFrameRef.current = requestAnimationFrame(animate);
-      }
-    }
-  };
+		// Handle bold
+		result = result.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+		result = result.replace(/__(.*?)__/g, "<strong>$1</strong>");
 
-  useEffect(() => {
-    if (isPlaying) {
-      startTimeRef.current = 0;
-      animationFrameRef.current = requestAnimationFrame(animate);
-    } else if (animationFrameRef.current) {
-      cancelAnimationFrame(animationFrameRef.current);
-    }
+		// Handle italic
+		result = result.replace(/\*(.*?)\*/g, "<em>$1</em>");
+		result = result.replace(/_(.*?)_/g, "<em>$1</em>");
 
-    return () => {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-    };
-  }, [isPlaying, speed]);
+		// Handle links
+		result = result.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2">$1</a>');
 
-  const togglePlay = () => {
-    if (!isPlaying) {
-      startTimeRef.current = performance.now() - (currentPosition / (speed * 100)) * 1000;
-    }
-    setIsPlaying(!isPlaying);
-  };
+		// Handle unordered lists
+		result = result.replace(/^\s*-\s*(.*$)/gm, "<li>$1</li>");
+		result = result.replace(/(<li>.*<\/li>)/g, "<ul>$1</ul>");
 
+		// Handle ordered lists
+		result = result.replace(/^\s*\d+\.\s*(.*$)/gm, "<li>$1</li>");
+		result = result.replace(/(<li>.*<\/li>)/g, "<ul>$1</ul>");
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const handleReload = () => {
-    setIsPlaying(false);
-    setCurrentPosition(0);
-    if (containerRef.current) {
-      containerRef.current.style.transform = `translateY(0px)`;
-    }
-  };
+		// Handle paragraphs (needs to be after other transformations)
+		// Split by line breaks and wrap non-empty lines that don't already have HTML tags
+		const lines = result.split("\n");
+		const wrappedLines = lines.map((line: string) => {
+			// Skip lines that are empty or already have HTML tags
+			if (line.trim() === "" || /<\/?[a-z][\s\S]*>/i.test(line)) {
+				return line;
+			}
+			return `<p>${line}</p>`;
+		});
+		result = wrappedLines.join("\n");
 
-  const handleSpeedChange = (e: ChangeEvent<HTMLInputElement>) => {
-    const newSpeed = parseFloat(e.target.value);
-    setSpeed(newSpeed);
-    if (containerRef.current) {
-      const duration = (contentHeight + windowHeight) / (100 * newSpeed);
-      containerRef.current.style.animationDuration = `${duration}s`;
-    }
-  };
+		return result;
+	};
 
-  const handleOffsetChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newOffset = parseInt(e.target.value);
-    setStartOffset(newOffset);
-  };
+	// Convert markdown to HTML for the textarea (with actual PHP tags)
+	const createHtmlWithPhpTags = (text: string): string => {
+		if (!text) return "";
 
-  const handleAnimationEnd = () => {
-    setIsPlaying(false);
-  };
+		let result = text;
 
-  useEffect(() => {
-    if (containerRef.current) {
-      const duration = (contentHeight + windowHeight) / (100 * speed);
-      containerRef.current.style.animationDuration = `${duration}s`;
-    }
-  }, [contentHeight, windowHeight, speed, fontSize]);
+		// Handle PHP placeholders with {name} syntax - MUST COME FIRST
+		result = result.replace(/\{([^{}]+)\}/g, "<?= $1 ?>");
 
-  useEffect(() => {
-    if (contentRef.current) {
-      setContentHeight(contentRef.current.offsetHeight);
-    }
-  }, [fontSize]);
+		// Handle code blocks with ```
+		result = result.replace(
+			/```(\w*)\n([\s\S]*?)\n```/g,
+			function (_match: string, language: string, code: string) {
+				return `<pre><code class="language-${language}">${escapeHtml(code)}</code></pre>`;
+			},
+		);
 
-  const renderMarkdown = (text: string): JSX.Element[] => {
-    const baseSize = fontSize;
-    return text.split('\n').map((line: string, index: number) => {
-      // Handle headers
-      if (line.startsWith('### ')) {
-        return (
-          <h3
-            key={index}
-            style={{ fontSize: baseSize * 1.25 }}
-            className="font-bold mt-8 mb-4 text-white"
-          >
-            {line.slice(4)}
-          </h3>
-        );
-      } else if (line.startsWith('## ')) {
-        return (
-          <h2
-            key={index}
-            style={{ fontSize: baseSize * 1.5 }}
-            className="font-bold mt-10 mb-5 text-white"
-          >
-            {line.slice(3)}
-          </h2>
-        );
-      } else if (line.startsWith('# ')) {
-        return (
-          <h1
-            key={index}
-            style={{ fontSize: baseSize * 2 }}
-            className="font-bold mt-12 mb-6 text-white"
-          >
-            {line.slice(2)}
-          </h1>
-        );
-      }
-      
-      // Handle list items
-      if (line.startsWith('* ') || line.startsWith('- ')) {
-        const content = line.slice(2);
-        const formattedContent = content.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-        return (
-          <p
-            key={index}
-            style={{ fontSize: baseSize }}
-            className="my-6 text-white"
-            dangerouslySetInnerHTML={{ __html: formattedContent }}
-          />
-        );
-      }
-      
-      // Handle regular text with bold formatting
-      const formattedLine = line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-      return (
-        <p
-          key={index}
-          style={{ fontSize: baseSize }}
-          className="text-white"
-          dangerouslySetInnerHTML={{ __html: formattedLine }}
-        />
-      );
-    });
-  };
+		// Handle inline code with `
+		result = result.replace(/`([^`]+)`/g, "<code>$1</code>");
 
-  return (
-    <div className="fixed inset-0 bg-black flex flex-col">
-      {/* Control buttons */}
-      <div className="absolute bottom-4 right-4 z-10 flex gap-2">
-        <button
-          onClick={togglePlay}
-          className="bg-white/20 hover:bg-white/30 p-2 rounded-full transition-colors"
-        >
-          {isPlaying ? <Pause className="text-white" size={24} /> : <Play className="text-white" size={24} />}
-        </button>
-        <button
-          onClick={handleReload}
-          className="bg-white/20 hover:bg-white/30 p-2 rounded-full transition-colors"
-          title="Reload"
-          aria-label="Reload credits"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="24"
-            height="24"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className="text-white"
-          >
-            <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
-            <path d="M21 3v5h-5" />
-            <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
-            <path d="M8 16H3v5" />
-          </svg>
-        </button>
-        <button
-          onClick={() => setShowSettings(true)}
-          className="bg-white/20 hover:bg-white/30 p-2 rounded-full transition-colors"
-          title="Settings"
-          aria-label="Open settings"
-          aria-labelledby="settings-button-label"
-        >
-          <MoreVertical className="text-white" size={24} />
-          <span id="settings-button-label" className="sr-only">Settings</span>
-        </button>
-      </div>
+		// Handle headers
+		result = result.replace(/^# (.*$)/gm, "<h1>$1</h1>");
+		result = result.replace(/^## (.*$)/gm, "<h2>$1</h2>");
+		result = result.replace(/^### (.*$)/gm, "<h3>$1</h3>");
+		result = result.replace(/^#### (.*$)/gm, "<h4>$1</h4>");
+		result = result.replace(/^##### (.*$)/gm, "<h5>$1</h5>");
+		result = result.replace(/^###### (.*$)/gm, "<h6>$1</h6>");
 
-      {/* Settings Dialog */}
-      <Dialog open={showSettings} onOpenChange={setShowSettings}>
-        <DialogContent className="bg-gray-900 text-white border-gray-700">
-          <DialogHeader>
-            <DialogTitle className="text-lg font-semibold">Settings</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-6 py-4">
-            <div className="space-y-4">
-              <label className="flex flex-col gap-2">
-                <span>Starting Position (Y-offset)</span>
-                <div className="flex items-center gap-3">
-                  <input
-                    type="range"
-                    min="0"
-                    max="200"
-                    value={startOffset}
-                    onChange={handleOffsetChange}
-                    className="w-full"
-                    aria-label="Starting position offset"
-                  />
-                  <span className="min-w-[4ch]">{startOffset}%</span>
-                </div>
-              </label>
+		// Handle bold
+		result = result.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+		result = result.replace(/__(.*?)__/g, "<strong>$1</strong>");
 
-              <label className="flex flex-col gap-2">
-                <span>Scroll Speed</span>
-                <div className="flex items-center gap-3">
-                  <input
-                    type="range"
-                    min="0.1"
-                    max="2"
-                    step="0.1"
-                    value={speed}
-                    onChange={handleSpeedChange}
-                    className="w-full"
-                  />
-                  <span className="min-w-[3ch]">{speed}x</span>
-                </div>
-              </label>
+		// Handle italic
+		result = result.replace(/\*(.*?)\*/g, "<em>$1</em>");
+		result = result.replace(/_(.*?)_/g, "<em>$1</em>");
 
-              <label className="flex flex-col gap-2">
-                <span>Font Size</span>
-                <div className="flex items-center gap-3">
-                  <input
-                    type="range"
-                    min="12"
-                    max="32"
-                    step="1"
-                    value={fontSize}
-                    onChange={handleFontSizeChange}
-                    className="w-full"
-                  />
-                  <span className="min-w-[3ch]">{fontSize}px</span>
-                </div>
-              </label>
+		// Handle links
+		result = result.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2">$1</a>');
 
-              <label className="flex items-center gap-2 cursor-pointer bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-md transition-colors w-full">
-                <Upload size={20} />
-                <span>Upload Markdown File</span>
-                <input
-                  type="file"
-                  accept=".md"
-                  onChange={handleFileUpload}
-                  className="hidden"
-                  aria-label="Upload markdown file"
-                />
-              </label>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+		// Handle unordered lists
+		result = result.replace(/^\s*-\s*(.*$)/gm, "<li>$1</li>");
+		result = result.replace(/(<li>.*<\/li>)/g, "<ul>$1</ul>");
 
-      {/* Credits container */}
-      <div className="flex-1 overflow-hidden relative">
-        <div
-          ref={containerRef}
-          className="absolute w-full text-center px-4"
-          style={{
-            animation: isPlaying ? `scroll-up ${20 / speed}s linear forwards` : 'none',
-            transform: isPlaying ? 'none' : `translateY(${startOffset}%)`
-          }}
-          onAnimationEnd={handleAnimationEnd}
-        >
-          <div ref={contentRef}>
-            {renderMarkdown(markdown)}
-          </div>
-          <div className="h-24" /> {/* Small padding at bottom */}
-        </div>
-      </div>
+		// Handle ordered lists
+		result = result.replace(/^\s*\d+\.\s*(.*$)/gm, "<li>$1</li>");
+		result = result.replace(/(<li>.*<\/li>)/g, "<ul>$1</ul>");
 
-      <style>{`
-        @keyframes scroll-up {
-          0% {
-            transform: translateY(${startOffset}%);
-          }
-          100% {
-            transform: translateY(-${contentHeight + 96}px);
-          }
-        }
-      `}</style>
-    </div>
-  );
+		// Handle paragraphs
+		const lines = result.split("\n");
+		const wrappedLines = lines.map((line: string) => {
+			// Skip lines that are empty or already have HTML tags
+			if (line.trim() === "" || /<\/?[a-z][\s\S]*>/i.test(line)) {
+				return line;
+			}
+			return `<p>${line}</p>`;
+		});
+		result = wrappedLines.join("\n");
+
+		return result;
+	};
+
+	// Convert markdown to HTML when markdown changes
+	useEffect(() => {
+		try {
+			// Parse markdown to get preview HTML with styled PHP placeholders
+			const previewHtml = parseMarkdown(markdown);
+			setHtml(previewHtml);
+
+			// Create HTML with actual PHP tags for the textarea
+			const htmlWithPhpTags = createHtmlWithPhpTags(markdown);
+			setHtmlForTextarea(htmlWithPhpTags);
+
+			// Extract and set placeholders
+			const extractedPlaceholders = extractPlaceholders(markdown);
+			setPlaceholders([...new Set(extractedPlaceholders)]);
+		} catch (error: unknown) {
+			const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+			setHtml(
+				`<p class="text-red-500">Error parsing markdown: ${errorMessage}</p>`,
+			);
+			setHtmlForTextarea(
+				`<p class="text-red-500">Error parsing markdown: ${errorMessage}</p>`,
+			);
+		}
+	}, [markdown]);
+
+	// Handle copy HTML to clipboard
+	const copyToClipboard = () => {
+		navigator.clipboard.writeText(htmlForTextarea).then(
+			() => {
+				setCopied(true);
+				setTimeout(() => setCopied(false), 2000);
+			},
+			(err) => {
+				console.error("Could not copy text: ", err);
+			},
+		);
+	};
+
+	return (
+		<div className="flex flex-col w-full h-full space-y-4">
+			<h1 className="text-2xl font-bold">Markdown to HTML Editor</h1> 
+			<a className="text-sm ml-2 text-blue-500" href="https://docs.google.com/spreadsheets/d/1NKRiLPrgnS3wv0WNXUpwyYW-C8JDVR_Z8VGQsKMsAzo/edit?gid=0" target="_blank">Google Sheets Link</a>
+			
+
+			{/* Placeholders section */}
+			{placeholders.length > 0 && (
+				<div className="flex flex-wrap gap-2 p-4 bg-gray-50 rounded">
+					<span className="text-sm font-medium text-gray-700 pt-1">Valid Placeholders:</span>
+					{placeholders.map((placeholder) => (
+						<button
+							key={placeholder}
+							onClick={() => copyPlaceholder(placeholder)}
+							className="px-3 py-1 text-sm bg-white border border-gray-300 rounded hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500"
+						>
+							{`${placeholder}`}
+							{copiedPlaceholder === placeholder && (
+								<span className="ml-2 text-green-600">✓</span>
+							)}
+						</button>
+					))}
+				</div>
+			)}
+
+			<div className="flex flex-col md:flex-row w-full h-full gap-4">
+				{/* Markdown input */}
+				<div className="flex flex-col w-full md:w-1/2 h-full">
+					<div className="bg-gray-100 px-4 py-2 font-medium">Markdown</div>
+					<textarea
+						className="w-full h-64 p-4 border border-gray-300 font-mono text-sm resize-none"
+						value={markdown}
+						onChange={(e) => setMarkdown(e.target.value)}
+						placeholder="Enter markdown here..."
+					/>
+				</div>
+
+				{/* HTML output */}
+				<div className="flex flex-col w-full md:w-1/2 h-full">
+					<div className="bg-gray-100 px-4 py-2 font-medium">HTML</div>
+					<textarea
+						className="w-full h-64 p-4 border border-gray-300 font-mono text-sm resize-none"
+						value={htmlForTextarea}
+						readOnly
+						placeholder="HTML will appear here..."
+					/>
+				</div>
+			</div>
+
+			{/* Preview section */}
+			<div className="w-full">
+				<div className="bg-gray-100 px-4 py-2 font-medium">Preview</div>
+				<div
+					className="w-full p-4 border border-gray-300 min-h-32"
+					dangerouslySetInnerHTML={{ __html: html }}
+				/>
+			</div>
+
+			{/* Copy button */}
+			<button
+				className={`px-4 py-2 rounded font-medium ${
+					copied
+						? "bg-green-500 text-white"
+						: "bg-blue-500 text-white hover:bg-blue-600"
+				}`}
+				onClick={copyToClipboard}
+			>
+				{copied ? "Copied!" : "Copy HTML"}
+			</button>
+		</div>
+	);
 };
 
-export default CreditsRoll;
+export default MarkdownToHtmlEditor;
