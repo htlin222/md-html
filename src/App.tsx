@@ -48,7 +48,7 @@ const MarkdownToHtmlEditor = () => {
 		// Handle PHP placeholders with {name} syntax
 		result = result.replace(
 			/\{([^{}]+)\}/g,
-			'<span class="bg-yellow-100 text-red-600 px-1 rounded">&lt;?= $1 ?&gt;</span>',
+			'<span class="bg-yellow-100 text-red-600 px-1 rounded">&lt;?!= $1 ?&gt;</span>',
 		);
 
 		// Handle code blocks with ```
@@ -111,7 +111,7 @@ const MarkdownToHtmlEditor = () => {
 		let result = text;
 
 		// Handle PHP placeholders with {name} syntax - MUST COME FIRST
-		result = result.replace(/\{([^{}]+)\}/g, "<?= $1 ?>");
+		result = result.replace(/\{([^{}]+)\}/g, "<?!= $1 ?>");
 
 		// Handle code blocks with ```
 		result = result.replace(
